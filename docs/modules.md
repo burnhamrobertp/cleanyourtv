@@ -148,3 +148,20 @@ the `game_day` key (`config.xml` or a theme); there is no card prompt for it.
    pressed on Home, right after a row ends, and on each change, and watches only while Home is on screen.
 
 The [Game Day](../addons/README.md) add-on implements this from calendar links the person adds.
+
+## Posters for the Continue watching row (com.gathin.tvhome.posters)
+
+Most apps give their Watch Next rows `https://` posters, which the launcher cannot fetch without `INTERNET`. An app
+can fetch them for it, so the row (`continue_watching`, see [watch-next.md](watch-next.md)) shows real artwork
+while the launcher stays offline.
+
+1. Hold the `com.gathin.tvhome.posters` authority with an exported provider, and sign the app with the same key as
+   the launcher. Build both the same way (both in Docker, or both natively): the launcher ignores the authority
+   when the keys differ, as a poster's address names what was watched.
+2. Answer `openFile` on `content://com.gathin.tvhome.posters/poster?url=<https url>` with the image, read only.
+   The launcher asks for at most the ten posters on the row, twice each (size, then pixels), from a background
+   thread, so the second ask should come from a cache.
+3. Refuse callers that are not signed like you, and fetch only what the row would show: `https://`, public
+   addresses, images.
+
+The [TV Posters](../addons/README.md) add-on implements this.

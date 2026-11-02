@@ -1,6 +1,7 @@
 # Add-ons
 
-Small, optional Android TV apps that plug into the launcher as a **module card**, kept in this repo
+Small, optional Android TV apps that plug into the launcher as a **module card** (or through one of the
+other contracts in [`docs/modules.md`](../docs/modules.md)), kept in this repo
 so they are easy to find, build and review. The launcher in [`launcher/`](../launcher/) never
 depends on them: it is built, tested and size-checked without this folder, so an add-on can't make
 the core bigger or change how it behaves. You install an add-on only if you want it.
@@ -40,6 +41,7 @@ the core bigger or change how it behaves. You install an add-on only if you want
 | [TV Inspector](tv-inspector/) | What the remote sends (key name, key code, scan code, device) and what the TV can play: display modes, HDR, video decoders, audio outputs and formats, input devices; every line also in logcat for a `tv.json` or a bug report | [@shaharukhs](https://github.com/shaharukhs) | Sansui TV (Skyworth eleonas, MediaTek MT9676), Android TV 14 | None | <img src="tv-inspector/screenshot.jpg" width="240" alt="TV Inspector on a TV"> |
 | [Game Day](game-day/) | Each team's next game on Home, counted down ("Puck drop in 2h 18m", then "Live now"), from calendar links you add: any team, any sport, no scores; one turn per team, rotating, with the theme's F1 weekend | [@justin-newman](https://github.com/justin-newman) | Hisense 75U75N (hengshan), Google TV 12 | `INTERNET` (your calendar links only) | <img src="game-day/screenshot.jpg" width="240" alt="Game Day on a TV"> |
 | [Haunted](haunted/) | A Halloween screensaver (and a card that starts it): the theme's night photos crossfading, bats drifting across, a ghost floating up, a flickering jack-o'-lantern glow and a small clock, drawn on the TV with no network | CleanYourTV contributors | Not yet tested on a real TV | None | <img src="haunted/screenshot.jpg" width="240" alt="Haunted on a TV"> |
+| [TV Posters](posters/) | Real posters on the launcher's Continue watching row (`continue_watching`), fetched for it so the launcher stays offline | [@burnhamrobertp](https://github.com/burnhamrobertp) | TCL G10 (`G10_4K_US_NF`), Google TV 12 | `INTERNET` (the row's posters only) | <img src="posters/screenshot.jpg" width="240" alt="TV Posters: the Continue watching row with real posters on a TV"> |
 
 A widget, an info tile, a storage or smart-home card: if it can live as its own small app, it can live
 here. See the rules below.

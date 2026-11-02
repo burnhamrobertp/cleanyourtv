@@ -9,7 +9,8 @@
 2. Copy a neighbour's `.gitignore` into the folder as well, so a build leaves nothing to commit: it keeps
    the Gradle output and the local.properties file Android Studio writes with your own SDK path out of
    git. `tests/test_addon_local_properties_ignored.py` asks git about each of those.
-3. It talks to the launcher only through the module-card contract (`docs/modules.md`, `docs/specs/card.md`).
+3. It talks to the launcher only through the module-card contract (`docs/modules.md`, `docs/specs/card.md`) or
+   one of the other contracts `docs/modules.md` describes (Game Day's events, the Continue watching posters).
    Nothing under `launcher/` changes, and `launcher/` never mentions `addons/`. If the idea needs a launcher
    change, it is not an add-on: open an issue.
 4. Its `README.md` has a Permissions section listing every permission and why, in the names its

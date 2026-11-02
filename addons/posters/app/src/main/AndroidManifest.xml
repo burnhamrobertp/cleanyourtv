@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <application
+        android:allowBackup="false"
+        android:label="TV Posters">
+
+        <provider
+            android:name=".PosterProvider"
+            android:authorities="com.gathin.tvhome.posters"
+            android:exported="true" />
+    </application>
+</manifest>
