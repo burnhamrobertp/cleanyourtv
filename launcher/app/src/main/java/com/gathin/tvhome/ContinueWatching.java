@@ -15,7 +15,9 @@ import java.io.InputStream;
 import java.net.URISyntaxException;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -23,23 +25,25 @@ import java.util.Set;
 import java.util.TreeMap;
 
 /**
- * The Continue watching row's data: the system's Watch Next table (docs/watch-next.md), read once per Home
- * resume off the main thread. Needs READ_TV_LISTINGS (build-and-install grants it); without it the query
+ * The Continue watching row's data: the system's Watch Next table (docs/watch-next.md), read on each Home
+ * resume and table change, off the main thread. Needs READ_TV_LISTINGS (build-and-install grants it); without it the query
  * throws and the row stays hidden.
  *
  * Only local posters are loaded (content://, android.resource://, file://). Most apps publish https://
  * poster URLs on their own CDNs; this app has no INTERNET permission, so those rows get a text card instead
- * and Home never makes a network request.
+ * and Home never makes a network request, unless a companion signed like this app provides
+ * POSTER_AUTHORITY: then https posters are asked of it.
  */
 final class ContinueWatching {
     static final String TAG = "TvHomeContinue";
     /** Rows older than this are dropped: some apps leave them for months (docs/watch-next.md, TCL C6K). */
-    private static final long MAX_AGE_MS = 60L * 24 * 60 * 60 * 1000;
+    private static final long MAX_AGE_MS = 7L * 24 * 60 * 60 * 1000;
     /** A "continue" row this far through is finished in all but name. */
     private static final double DONE_FRACTION = 0.95;
     static final int MAX_ITEMS = 10;
     /** Poster decode width; a card is 160dp wide, 2x on this box. */
     private static final int POSTER_PX = 360;
+    private static final String POSTER_AUTHORITY = "com.gathin.tvhome.posters";
 
     static final class Item {
         final String pkg;
@@ -47,21 +51,48 @@ final class ContinueWatching {
         final String subtitle;
         final String intentUri;
         final float progress;      // 0..1, or -1 when the app gives no position
-        final String posterUri;    // local posters only; null: the app's banner
+        final String posterUri;    // local, or the poster companion's; null: the app's banner
+        final long engaged;
         Bitmap poster;             // filled in by loadPoster, off the main thread
 
-        Item(String pkg, String title, String subtitle, String intentUri, float progress, String posterUri) {
+        Item(String pkg, String title, String subtitle, String intentUri, float progress, String posterUri,
+             long engaged) {
             this.pkg = pkg;
             this.title = title;
             this.subtitle = subtitle;
             this.intentUri = intentUri;
             this.progress = progress;
             this.posterUri = posterUri;
+            this.engaged = engaged;
         }
     }
 
+    /** Prime Video deletes all its rows when it opens or closes and writes them again a second or two later, often
+     *  while Home is coming back: an app whose rows all vanish keeps its last cards this long. */
+    static final long HOLD_MS = 10_000;
+    private static final Map<String, List<Item>> lastRows = new HashMap<>();
+    private static final Map<String, Long> goneSince = new HashMap<>();
+    private static boolean holding;
+
     private ContinueWatching() {
     }
+
+    /** Named rather than null: a null projection fails on split_id on a Philips TPM191E (docs/watch-next.md). */
+    private static final String[] COLUMNS = {
+            TvContract.WatchNextPrograms.COLUMN_PACKAGE_NAME,
+            TvContract.WatchNextPrograms.COLUMN_BROWSABLE,
+            TvContract.WatchNextPrograms.COLUMN_LAST_ENGAGEMENT_TIME_UTC_MILLIS,
+            TvContract.WatchNextPrograms.COLUMN_TITLE,
+            TvContract.WatchNextPrograms.COLUMN_LAST_PLAYBACK_POSITION_MILLIS,
+            TvContract.WatchNextPrograms.COLUMN_DURATION_MILLIS,
+            TvContract.WatchNextPrograms.COLUMN_WATCH_NEXT_TYPE,
+            TvContract.WatchNextPrograms.COLUMN_POSTER_ART_URI,
+            TvContract.WatchNextPrograms.COLUMN_THUMBNAIL_URI,
+            TvContract.WatchNextPrograms.COLUMN_INTENT_URI,
+            TvContract.WatchNextPrograms.COLUMN_SEASON_DISPLAY_NUMBER,
+            TvContract.WatchNextPrograms.COLUMN_EPISODE_DISPLAY_NUMBER,
+            TvContract.WatchNextPrograms.COLUMN_EPISODE_TITLE,
+    };
 
     /** Runs on a background thread. Never throws: any failure is one log line and an empty list. */
     static List<Item> load(Context context) {
@@ -70,10 +101,9 @@ final class ContinueWatching {
         PackageManager pm = context.getPackageManager();
         long now = System.currentTimeMillis();
         Map<String, Integer> perPackage = new TreeMap<>();
-        Set<String> seen = new HashSet<>();
-        List<long[]> order = new ArrayList<>();   // {engagement, index into items}
+        boolean posterFetcher = hasPosterFetcher(context);
         // No selection: a caller without ACCESS_ALL_EPG_DATA gets a SecurityException when it passes one.
-        try (Cursor c = cr.query(TvContract.WatchNextPrograms.CONTENT_URI, null, null, null, null)) {
+        try (Cursor c = cr.query(TvContract.WatchNextPrograms.CONTENT_URI, COLUMNS, null, null, null)) {
             if (c == null) {
                 Log.w(TAG, "Watch Next query returned no cursor (no TV provider?)");
                 return items;
@@ -87,7 +117,6 @@ final class ContinueWatching {
                 if (engaged > 0 && now - engaged > MAX_AGE_MS) continue;
                 String title = str(c, TvContract.WatchNextPrograms.COLUMN_TITLE);
                 if (title == null || title.isEmpty()) continue;
-                if (!seen.add(pkg + '\n' + title)) continue;   // one card per show
                 if (pm.getLeanbackLaunchIntentForPackage(pkg) == null && pm.getLaunchIntentForPackage(pkg) == null) continue;
 
                 long pos = lng(c, TvContract.WatchNextPrograms.COLUMN_LAST_PLAYBACK_POSITION_MILLIS, 0);
@@ -99,9 +128,8 @@ final class ContinueWatching {
                 String poster = str(c, TvContract.WatchNextPrograms.COLUMN_POSTER_ART_URI);
                 if (poster == null) poster = str(c, TvContract.WatchNextPrograms.COLUMN_THUMBNAIL_URI);
                 Item item = new Item(pkg, title, subtitle(c), str(c, TvContract.WatchNextPrograms.COLUMN_INTENT_URI),
-                        progress, isLocal(poster) ? poster : null);
+                        progress, posterUri(poster, posterFetcher), engaged);
                 item.poster = cached(item.posterUri);
-                order.add(new long[]{engaged, items.size()});
                 items.add(item);
             }
         } catch (Exception e) {
@@ -109,14 +137,59 @@ final class ContinueWatching {
             Log.w(TAG, "Watch Next not readable: " + e);
             return new ArrayList<>();
         }
-        Log.i(TAG, "Watch Next rows per app: " + perPackage + ", shown: " + Math.min(items.size(), MAX_ITEMS));
-        Collections.sort(order, (a, b) -> Long.compare(b[0], a[0]));
-        List<Item> sorted = new ArrayList<>();
-        for (long[] o : order) {
-            if (sorted.size() == MAX_ITEMS) break;
-            sorted.add(items.get((int) o[1]));
+        holdVanished(items, perPackage.keySet(), now);
+        List<Item> shown = newestPerShow(items);
+        Log.i(TAG, "Watch Next rows per app: " + perPackage + ", shown: " + shown.size() + (holding ? ", holding" : ""));
+
+        return shown;
+    }
+
+    /** Newest first, one card per show (its newest row: some apps keep a row per episode), MAX_ITEMS at most. */
+    static List<Item> newestPerShow(List<Item> items) {
+        List<Item> sorted = new ArrayList<>(items);
+        Collections.sort(sorted, (a, b) -> Long.compare(b.engaged, a.engaged));
+        List<Item> shown = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+        for (Item item : sorted) {
+            if (shown.size() == MAX_ITEMS) break;
+            if (seen.add(item.pkg + '\n' + item.title)) shown.add(item);
         }
-        return sorted;
+
+        return shown;
+    }
+
+    /** Adds the last cards of each app that had rows before and has none now, until it has had none for HOLD_MS. */
+    static synchronized void holdVanished(List<Item> items, Set<String> present, long now) {
+        Map<String, List<Item>> current = new HashMap<>();
+        for (Item item : items) current.computeIfAbsent(item.pkg, k -> new ArrayList<>()).add(item);
+        holding = false;
+        for (Iterator<Map.Entry<String, List<Item>>> it = lastRows.entrySet().iterator(); it.hasNext(); ) {
+            Map.Entry<String, List<Item>> e = it.next();
+            if (present.contains(e.getKey())) continue;
+            long since = goneSince.computeIfAbsent(e.getKey(), k -> now);
+            if (now - since < HOLD_MS) {
+                items.addAll(e.getValue());
+                holding = true;
+            } else {
+                it.remove();
+                goneSince.remove(e.getKey());
+            }
+        }
+        for (String pkg : present) {
+            goneSince.remove(pkg);
+            lastRows.put(pkg, current.getOrDefault(pkg, Collections.emptyList()));
+        }
+    }
+
+    static synchronized void forgetHeld() {
+        lastRows.clear();
+        goneSince.clear();
+        holding = false;
+    }
+
+    /** True while the last load kept an app's vanished cards: load again after HOLD_MS to drop them if they stay gone. */
+    static synchronized boolean isHolding() {
+        return holding;
     }
 
     /** "S2 · E5 · Episode title", or whatever part of it the app filled in. */
@@ -125,10 +198,16 @@ final class ContinueWatching {
         String season = str(c, TvContract.WatchNextPrograms.COLUMN_SEASON_DISPLAY_NUMBER);
         String episode = str(c, TvContract.WatchNextPrograms.COLUMN_EPISODE_DISPLAY_NUMBER);
         String name = str(c, TvContract.WatchNextPrograms.COLUMN_EPISODE_TITLE);
-        if (season != null && !season.isEmpty()) s.append('S').append(season);
-        if (episode != null && !episode.isEmpty()) s.append(s.length() > 0 ? " · " : "").append('E').append(episode);
+        if (isNumbered(season)) s.append('S').append(season);
+        if (isNumbered(episode)) s.append(s.length() > 0 ? " · " : "").append('E').append(episode);
         if (name != null && !name.isEmpty()) s.append(s.length() > 0 ? " · " : "").append(name);
+
         return s.toString();
+    }
+
+    /** Peacock files its films as season 0, episode 0. */
+    private static boolean isNumbered(String n) {
+        return n != null && !n.isEmpty() && !n.equals("0");
     }
 
     /** Decoded posters by URI, so Home coming back does not fetch them again: Jellyfin's provider asks its
@@ -145,6 +224,23 @@ final class ContinueWatching {
         if (uri == null) return false;
         String scheme = Uri.parse(uri).getScheme();
         return "content".equals(scheme) || "android.resource".equals(scheme) || "file".equals(scheme);
+    }
+
+    private static String posterUri(String poster, boolean posterFetcher) {
+        if (isLocal(poster)) return poster;
+        if (!posterFetcher || poster == null || !poster.startsWith("https://")) return null;
+
+        return new Uri.Builder().scheme("content").authority(POSTER_AUTHORITY).appendPath("poster")
+                .appendQueryParameter("url", poster).build().toString();
+    }
+
+    /** Signed like this app, as the posters' URLs name what was watched. */
+    private static boolean hasPosterFetcher(Context context) {
+        PackageManager pm = context.getPackageManager();
+        android.content.pm.ProviderInfo info = pm.resolveContentProvider(POSTER_AUTHORITY, 0);
+
+        return info != null
+                && pm.checkSignatures(info.packageName, context.getPackageName()) == PackageManager.SIGNATURE_MATCH;
     }
 
     private static Bitmap cached(String uri) {

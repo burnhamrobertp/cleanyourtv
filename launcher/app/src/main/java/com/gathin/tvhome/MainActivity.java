@@ -17,6 +17,7 @@ import android.content.pm.ResolveInfo;
 import android.content.pm.ChangedPackages;
 import android.content.res.ColorStateList;
 import android.content.res.Resources;
+import android.database.ContentObserver;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Color;
@@ -363,6 +364,15 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     private RecyclerView.OnScrollListener pendingFocusScroll;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
+    private final Runnable reloadContinueRow = this::loadContinueRow;
+    // Prime Video writes its row a minute or two after playback stops, usually after Home is already back.
+    private final ContentObserver watchNextObserver = new ContentObserver(handler) {
+        @Override
+        public void onChange(boolean selfChange) {
+            handler.removeCallbacks(reloadContinueRow);
+            handler.postDelayed(reloadContinueRow, 1000);
+        }
+    };
     /** Refreshes the network pill when the connection changes: at boot Wi-Fi often connects after Home is shown. */
     private final ConnectivityManager.NetworkCallback networkCallback = new ConnectivityManager.NetworkCallback() {
         @Override
@@ -1103,6 +1113,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         restartIdleClock();
         promptsPaused = false;
         loadContinueRow();
+        watchWatchNext(true);
         if (grid.getAdapter() == null) grid.setAdapter(adapter);   // dropped by onTrimMemory
         switch (tileRefresh.onResume(packagesChangedSinceRebuild())) {
             case REBUILD:
@@ -1309,6 +1320,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         // Only Home's own share is dropped: a key service that saw the same DOWN keeps its hold.
         RemoteKeys.release(this);
         cancelHoldOk();
+        watchWatchNext(false);
         root.removeCallbacks(showIdleClock);
         endReorder();   // Home or another app while reordering keeps the order so far
         wallpaperPlayer.stop();
@@ -2288,7 +2300,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         }, getString(R.string.continue_watching));
         FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        lp.setMarginStart((int) (56 * density));
+        continueRow.setSideInset((int) (56 * density));
         root.addView(continueRow, root.indexOfChild(glass), lp);
         // Under the clock block, and only where it clears the dock's title: on a screen too short for both, the
         // row stays hidden rather than drawing over the title.
@@ -2300,14 +2312,27 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             if (continueRow.getY() != y) continueRow.setY(y);
             Rect g = new Rect(0, 0, grid.getWidth(), grid.getHeight());
             root.offsetDescendantRectToMyCoords(grid, g);
-            float dockTop = g.top + grid.getPaddingTop();
+            // The dock card's top, which showHero measures from: DockDecoration's 6dp and item_app.xml's 8dp padding.
+            float dockTop = g.top + grid.getPaddingTop() + (6 + 8) * density;
             float rowBottom = y + (13 + 6 + 12 + ContinueRow.CARD_H_DP + 12) * density;
             float heroTop = dockTop - 40 * density - hero.getHeight();
             continueRow.setFits(rowBottom <= heroTop);
         });
     }
 
-    /** Once per resume, off the main thread: a provider query and a few local posters. No polling. */
+    private void watchWatchNext(boolean on) {
+        if (continueRow == null) return;
+        handler.removeCallbacks(reloadContinueRow);
+        try {
+            if (on) getContentResolver().registerContentObserver(TvContract.WatchNextPrograms.CONTENT_URI, true, watchNextObserver);
+            else getContentResolver().unregisterContentObserver(watchNextObserver);
+        } catch (RuntimeException e) {
+            Log.w(ContinueWatching.TAG, "Watch Next changes not observable: " + e);
+        }
+    }
+
+    /** On resume and when the Watch Next table changes, off the main thread: a provider query and a few local
+     *  posters. No polling. */
     private void loadContinueRow() {
         if (continueRow == null) return;
         Context app = getApplicationContext();
@@ -2317,6 +2342,10 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
                 if (continueRow == null || isFinishing() || isDestroyed()) return;
                 continueRow.setItems(items);
                 updateTopBarDown();
+                if (resumed && ContinueWatching.isHolding()) {
+                    handler.removeCallbacks(reloadContinueRow);
+                    handler.postDelayed(reloadContinueRow, ContinueWatching.HOLD_MS);
+                }
             });
             // Then the posters, each swapped in as it arrives: the row does not wait for the slowest one.
             for (ContinueWatching.Item item : items) {

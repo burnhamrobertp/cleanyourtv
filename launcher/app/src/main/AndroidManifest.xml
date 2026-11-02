@@ -71,6 +71,8 @@
         <!-- Coocaa OS sources for the Inputs menu (coocaa_sources); see CoocaaSources. -->
         <provider android:authorities="com.skyworth.tv.provider" />
         <provider android:authorities="com.skyworth.tv.sdk.provider" />
+        <!-- Continue watching: an optional companion that fetches https posters (docs/watch-next.md). -->
+        <provider android:authorities="com.gathin.tvhome.posters" />
     </queries>
 
     <application

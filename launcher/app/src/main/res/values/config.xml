@@ -457,11 +457,11 @@
          "show_stats": true. Nothing is read, and the clock does not move, while this is false. -->
     <bool name="show_stats">false</bool>
 
-    <!-- A Continue watching row above the dock, from the system's Watch Next table (docs/watch-next.md). Read once
-         each time Home comes back, never polled. Needs READ_TV_LISTINGS, which build-and-install grants. Only
-         local posters are shown (Jellyfin's, for one); rows whose poster is a web address get the app's own
-         banner instead, so Home makes no network request. Hidden on a screen with no room above the dock.
-         Off by default. -->
+    <!-- A Continue watching row above the dock, from the system's Watch Next table (docs/watch-next.md). Read each
+         time Home comes back and when the table changes while Home is up, never polled. Needs READ_TV_LISTINGS,
+         which build-and-install grants. Only local posters are drawn; rows whose poster is a web address get the
+         app's own banner, unless the TV Posters add-on (com.gathin.tvhome.posters) is installed to fetch them, so
+         Home itself makes no network request. Hidden on a screen with no room above the dock. -->
     <bool name="continue_watching">false</bool>
 
     <!-- Each team's next game in the F1 panel's place under the clock, rotating with the theme's F1 weekend: the package

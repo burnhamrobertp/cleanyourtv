@@ -81,16 +81,21 @@ module's `AndroidManifest.xml`.
 ## In the launcher
 
 `continue_watching` in `config.xml` (off by default) shows these rows as a Continue watching row between the
-clock and the dock: `ContinueWatching.java` reads and filters the table (browsable rows only, engaged in the last
-60 days, a "continue" row under 95%, one card per show, ten at most, newest first), `ContinueRow.java` draws it.
-It reads once each time Home comes back, never on a timer, and needs `READ_TV_LISTINGS`, which
-`launcher/build-and-install.sh` grants.
+clock and the dock. `ContinueWatching.java` reads and filters the table: browsable rows only, engaged in the last
+7 days, a "continue" row under 95%, newest first, one card per show (its newest row), ten at most.
+`ContinueRow.java` draws it. It reads each time Home comes back and again when the table changes while Home is
+up, never on a timer, and needs `READ_TV_LISTINGS`, which `launcher/build-and-install.sh` grants.
 
 Only local posters are drawn (`content://`, `android.resource://`, `file://`): the launcher has no `INTERNET`
-permission, so rows with `https://` posters get the app's own banner under the title instead. Local posters can
-still be slow, as Jellyfin's provider fetches each one from its server (about four seconds a poster on a Strong
-LEAP-S3), so the row comes up with banners first and swaps each poster in as it arrives, with a small cache
-across Home resumes. A row's `intent_uri` is only followed when it points at the app that published the row.
+permission, so rows with `https://` posters get the app's own banner under the title instead, unless an app
+provides the posters contract in [modules.md](modules.md) (the TV Posters add-on). Each card carries the
+publishing app's icon. A row's `intent_uri` is only followed when it points at the app that published the row.
 
-Seen on a Strong LEAP-S3 (Google TV 14): 24 Watch Next rows, from Disney+ (8), Videoland (6), Jellyfin (6) and
-Netflix (4); seven passed the filters.
+- **Seen on a Strong LEAP-S3** (Google TV 14): 24 Watch Next rows, from Disney+ (8), Videoland (6), Jellyfin (6)
+  and Netflix (4); seven passed the filters.
+- **Seen on a 55-inch TCL Google TV** (G10, `G10_4K_US_NF`, Android 12, `STT2.230203.001`), with launcherx disabled:
+  Netflix, Peacock and Prime Video all write Watch Next rows, every poster `https://`. Prime Video writes late
+  and in bursts. It adds a title a minute or more after playback stops, sometimes only when Prime Video is next
+  opened, and when it opens or closes it deletes all its rows and writes them again a second or two later. So
+  the row takes the table's changes while Home is up, and an app whose rows all vanish keeps its last cards for
+  ten seconds. Peacock files films as season 0, episode 0, which the card leaves out.

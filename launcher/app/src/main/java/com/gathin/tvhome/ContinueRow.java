@@ -4,6 +4,7 @@ import android.content.Context;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.graphics.Outline;
+import android.graphics.Rect;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
 import android.text.TextUtils;
@@ -50,6 +51,7 @@ final class ContinueRow extends LinearLayout {
 
     private final Host host;
     private final float density;
+    private final TextView title;
     private final LinearLayout cards;
     private final HorizontalScrollView scroller;
     private final List<View> cardViews = new ArrayList<>();
@@ -69,7 +71,7 @@ final class ContinueRow extends LinearLayout {
         setClipChildren(false);
         setClipToPadding(false);
 
-        TextView title = new TextView(context);
+        title = new TextView(context);
         title.setText(caption);
         title.setAllCaps(true);
         title.setLetterSpacing(0.25f);
@@ -80,7 +82,21 @@ final class ContinueRow extends LinearLayout {
         tlp.setMarginStart(dp(12));
         addView(title, tlp);
 
-        scroller = new HorizontalScrollView(context);
+        scroller = new HorizontalScrollView(context) {
+            // The stock version scrolls a card flush with the screen edge; keep it where the first card rests.
+            @Override
+            protected int computeScrollDeltaToGetChildRectOnScreen(Rect rect) {
+                int edge = getPaddingLeft() + dp(12);
+                int left = getScrollX() + edge;
+                int right = getScrollX() + getWidth() - edge;
+                int range = Math.max(0, cards.getWidth() - (getWidth() - getPaddingLeft() - getPaddingRight()));
+                int delta = 0;
+                if (rect.left < left) delta = rect.left - left;
+                else if (rect.right > right) delta = rect.right - right;
+
+                return Math.max(-getScrollX(), Math.min(delta, range - getScrollX()));
+            }
+        };
         scroller.setHorizontalScrollBarEnabled(false);
         scroller.setOverScrollMode(OVER_SCROLL_NEVER);
         scroller.setClipChildren(false);
@@ -95,6 +111,13 @@ final class ContinueRow extends LinearLayout {
         cards.setPadding(pad, pad, pad, pad);
         scroller.addView(cards, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         addView(scroller, new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+    }
+
+    /** The row spans the screen so cards scroll out through both margins instead of being cut at the left one. */
+    void setSideInset(int inset) {
+        ((LayoutParams) title.getLayoutParams()).setMarginStart(inset + dp(12));
+        title.requestLayout();
+        scroller.setPadding(inset, 0, inset, 0);
     }
 
     // Focus only comes here on purpose: Up from the dock, Down from the top bar, or along the row. When the grid
@@ -242,6 +265,24 @@ final class ContinueRow extends LinearLayout {
                 new int[]{0xE6000000, 0x00000000}));
         card.addView(scrim, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(60), Gravity.BOTTOM));
 
+        Drawable appIcon = icon(item.pkg);
+        if (appIcon != null) {
+            ImageView badge = new ImageView(ctx);
+            badge.setImageDrawable(appIcon);
+            badge.setScaleType(ImageView.ScaleType.CENTER_CROP);
+            badge.setOutlineProvider(new ViewOutlineProvider() {
+                @Override
+                public void getOutline(View view, Outline outline) {
+                    outline.setRoundRect(0, 0, view.getWidth(), view.getHeight(), dp(5));
+                }
+            });
+            badge.setClipToOutline(true);
+            badge.setElevation(dp(2));
+            FrameLayout.LayoutParams ilp = new FrameLayout.LayoutParams(dp(22), dp(22), Gravity.TOP | Gravity.START);
+            ilp.setMargins(dp(8), dp(8), 0, 0);
+            card.addView(badge, ilp);
+        }
+
         LinearLayout text = new LinearLayout(ctx);
         text.setOrientation(VERTICAL);
         text.setPadding(dp(10), 0, dp(10), dp(item.progress >= 0 ? 10 : 8));
@@ -328,6 +369,14 @@ final class ContinueRow extends LinearLayout {
         try {
             Drawable d = pm.getApplicationBanner(pkg);
             return d != null ? d : pm.getApplicationIcon(pkg);
+        } catch (PackageManager.NameNotFoundException e) {
+            return null;
+        }
+    }
+
+    private Drawable icon(String pkg) {
+        try {
+            return getContext().getPackageManager().getApplicationIcon(pkg);
         } catch (PackageManager.NameNotFoundException e) {
             return null;
         }
